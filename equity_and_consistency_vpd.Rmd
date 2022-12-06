@@ -93,12 +93,22 @@ SGLPatientsREDCap <- myData %>%
   filter(team_value == "2") %>% 
   distinct(record_id,project_team, .keep_all = TRUE)
 
-
 today <- as.Date(Sys.Date())
 intervalbday <- SGLPatientsREDCap$bday %--% today
 SGLPatientsREDCap$age <- intervalbday
+# Date since 
 
-per_patient_reach_pt_iterative_vpd <- left_join(per_patient_reach_pt_iterative_vpd1,SGLPatientsREDCap, by = "record_id") 
+date_list <- as_tibble(per_patient_reach_pt_iterative_vpd1$date)
+date_list$value <- as.Date(date_list$value)
+unique_date_list <- date_list %>% 
+  unique() %>% 
+  select(date = value) %>%
+  mutate(days_since_launch = as.numeric(difftime(date,first(date), units = "days")), 
+         years_since_launch = as.numeric(difftime(date,first(date),date, units = "days")/365))
+
+per_patient_reach_pt_iterative_vpd2 <- left_join(per_patient_reach_pt_iterative_vpd1,unique_date_list,by ="date")
+
+per_patient_reach_pt_iterative_vpd <- left_join(per_patient_reach_pt_iterative_vpd2,SGLPatientsREDCap, by = "record_id") 
 ```
 
 
@@ -142,12 +152,12 @@ per_pt_model_df <- per_patient_reach_pt_iterative_vpd %>%
   filter(date >= "2022-05-14") %>% 
   mutate(ff_clean = case_when(ff =="Yes"~1,
                               TRUE~0))
-levels(per_pt_model_df$ff)
+
 # Descriptives: preferred_gender, project_team, ff
 descriptives_percent_visited = lmer(percent_visited_to_date ~ preferred_gender + project_team + ff_clean + (1|record_id), data = per_pt_model_df, REML=FALSE)
 
 # Effect of new census and days on census 
-census_percent_visited = lmer(percent_visited_to_date ~ new_census + days_on_census + ff_clean +(1|record_id), data = per_pt_model_df, REML=FALSE)
+census_percent_visited = lmer(percent_visited_to_date ~ new_census + days_on_census + ff_clean + years_since_launch + (1|record_id), data = per_pt_model_df, REML=FALSE)
 
 tab_model(descriptives_percent_visited, census_percent_visited, dv.labels = c("Model 1: Patient Descriptives","Model 2:New Census"), show.aic = TRUE, show.dev = TRUE)
 
