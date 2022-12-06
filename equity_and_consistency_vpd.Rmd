@@ -1,0 +1,115 @@
+---
+title: "equity_and_consistency_vpd"
+author: "Drew Walker"
+date: "2022-12-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(here)
+library(redcapAPI)
+library(lme4)
+library(nlme)
+library(sjPlot)
+library(sjmisc)
+library(patchwork)
+library(sjlabelled)
+redcap_api_url <- 'https://redcap.ctsi.ufl.edu/redcap/api/' 
+#set options to allow us to access project files
+#below is the token and urls
+options(redcap_api_url)
+
+APIToken <- read_csv("apitoken.csv", col_names = FALSE)
+StreetlightDatabaseToken <- as.character(APIToken[1,1])
+
+rcon <- redcapConnection(redcap_api_url, token = StreetlightDatabaseToken)
+
+#successful complete exportation of entire dataset 
+myData <- exportRecords(rcon, labels=FALSE)
+
+```
+
+## creating on census, visited, vpd variables
+
+- unlike the census one, we should calculate this iteratively (every date has the VPD only up to that date )
+```{r vpd-cum-avg}
+on_census_days_pt <- myData %>%
+  select(record_id,date=census_date) %>% 
+  filter(!is.na((date))) 
+
+visited_days_pt <- myData %>% 
+  select(record_id,date) %>% 
+  mutate(visited = 1) %>% 
+  filter(!is.na(date))
+
+patient_reach_df <- left_join(on_census_days_pt,visited_days_pt, by = c("record_id","date"))
+patient_reach_df[is.na(patient_reach_df)] <- 0
+patient_reach_df <- patient_reach_df %>% 
+  mutate(new_census = as.factor(ifelse(date >="2022-11-14", 1, 0)))
+
+per_patient_reach_pt_iterative_vpd <- patient_reach_df %>% 
+  group_by(record_id) %>% 
+  arrange(date) %>% 
+  mutate(percent_visited_to_date = cumsum(visited)/seq_along(visited),
+         on_census = 1,
+         days_on_census = cumsum(on_census))
+
+
+overall_patient_reach_by_date <- patient_reach_df %>% 
+  group_by(date) %>% 
+  summarize(percent_visited = mean(visited))
+
+
+```
+
+```{r visualizations-individual, eval=FALSE}
+vpd_over_time <- ggplot(per_patient_reach_pt_iterative_vpd, aes(date, percent_visited_to_date,fill = record_id))+
+  geom_point()
+vpd_over_time
+
+```
+
+```{r visualizations-overalll}
+daily_visit_pct <- ggplot(overall_patient_reach_by_date, aes(date, percent_visited))+
+  geom_line()+
+  geom_vline(xintercept = as.POSIXct(as.Date("2022-11-14")),
+             color = "dark green", size = 2, linetype = "dashed")
+daily_visit_pct
+
+```
+
+```{r overall-rdd-graph}
+overall_patient_reach_by_date%>% 
+  select(date, percent_visited) %>% 
+  filter(date >= "2022-05-14") %>% 
+  mutate(new_census = as.factor(ifelse(date >="2022-11-14", 1, 0))) %>% 
+  ggplot(aes(date,percent_visited, color = new_census)) +
+  geom_point() + 
+  geom_smooth(method = "lm")
+```
+
+```{r eda}
+cor.test(per_patient_reach_pt_iterative_vpd$days_on_census,per_patient_reach_pt_iterative_vpd$percent_visited_to_date)
+```
+
+
+## MLMs 
+
+```{r}
+library(lme4)
+library(nlme)
+per_pt_model_df <- per_patient_reach_pt_iterative_vpd %>% 
+  filter(date >= "2022-05-14")
+
+# Effect of just new census 
+new_census_pt_model = glmer(visited ~ new_census + days_on_census + (1|record_id), data = per_pt_model_df, family=binomial("logit"))
+
+# Add percent visited, random interpt for census per pt
+census_percent_visited = glmer(visited ~ new_census + days_on_census + percent_visited_to_date + (1|record_id), data = per_pt_model_df, family=binomial("logit"))
+
+tab_model(new_census_pt_model,census_percent_visited, dv.labels = c("Model 1: Unadjusted New Census","Model 2: Percent Visited"), show.aic = TRUE, show.dev = TRUE)
+
+```
+
