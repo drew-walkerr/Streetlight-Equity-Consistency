@@ -145,6 +145,8 @@ cor.test(per_patient_reach_pt_iterative_vpd$days_on_census,per_patient_reach_pt_
 
 ## MLMs 
 
+* To-dos: add number of volunteers as a control variable 
+
 ```{r percent-as-outcome}
 library(lme4)
 library(nlme)
@@ -164,13 +166,17 @@ tab_model(descriptives_percent_visited, census_percent_visited, dv.labels = c("M
 ```
 
 ```{r visited-as-outcome}
-#Descriptives predicting whether or not pt was visited-- need to refactor FF
-descriptives_visit_bin = glmer(visited ~ preferred_gender + project_team + ff + (1|record_id), data = per_pt_model_df, family=binomial("logit"))
+#Descriptives predicting whether or not pt was visited
+# low_percent
+descriptives_visit_bin = glmer(visited ~ preferred_gender + project_team + ff_clean + (1|record_id), data = per_pt_model_df, family=binomial("logit"))
 
 
 # Effect of just new census and days on census
+# low_percent
+new_census_visit_bin = glmer(visited ~ new_census + days_on_census + ff_clean + years_since_launch + (1|record_id), data = per_pt_model_df, family=binomial("logit"))
 
-new_census_visit_bin = glmer(visited ~ new_census + days_on_census + (1|record_id), data = per_pt_model_df, family=binomial("logit"))
+tab_model(descriptives_visit_bin, new_census_visit_bin, dv.labels = c("Model 1: Patient Descriptives on chance of getting visited","Model 2:New Census on Chance of getting Visited"), show.aic = TRUE, show.dev = TRUE)
 
 ```
-
+## Dates of no-shift, but census was run
+"2022-12-13", 
