@@ -37,7 +37,8 @@ myData <- exportRecords(rcon, labels=FALSE)
 - unlike the census one, we should calculate this iteratively (every date has the VPD only up to that date )
 ```{r vpd-cum-avg}
 on_census_days_pt <- myData %>%
-  select(record_id,date=census_date) %>% 
+  fill(start_date) %>% 
+  select(record_id,date=census_date,start_date) %>% 
   filter(!is.na((date))) 
 
 visited_days_pt <- myData %>% 
@@ -56,7 +57,14 @@ per_patient_reach_pt_iterative_vpd1 <- patient_reach_df %>%
   mutate(percent_visited_to_date = cumsum(visited)/seq_along(visited),
          on_census = 1,
          days_on_census = cumsum(on_census),
-       low_percent = case_when(percent_visited_to_date < .50~ 1, TRUE ~0))
+         low_percent = case_when(percent_visited_to_date < .50~ 1, TRUE ~0),
+       real_start_date =  first(date),
+       real_days_since_start = as.numeric((real_start_date %--% date))/86400)
+first_visit_df <- per_patient_reach_pt_iterative_vpd1 %>% 
+  filter(visited == 1) %>% 
+  mutate(first_visit = first(date),
+         time_to_first_visit = as.numeric((real_start_date %--%
+                                             first_visit))/86400)
 
 
 overall_patient_reach_by_date <- patient_reach_df %>% 
@@ -77,16 +85,18 @@ myData$sex_assigned_at_birth <- tolower(myData$sex_assigned_at_birth)
 
 SGLPatientsREDCap <- myData %>% 
   group_by(record_id) %>% 
-  fill(preferred_gender,bday,deceased,discord_user,discord_invite_status) %>% 
+  fill(preferred_gender,bday,deceased,discord_user,discord_invite_status,start_date) %>% 
   mutate(team_cancer = unclass(first(project_team___1)),
-    team_cf = unclass(first(project_team___2)),
-    team_transplant = unclass(first(project_team___3)),
-    team_sicklecell = unclass(first(project_team___4)),
-    team_autoimmune = unclass(first(project_team___5)),
-    team_gi = unclass(first(project_team___6)),
-    team_other = unclass(first(project_team___7)),
-    predicted_project_team = first(predicted_project_team),
-    sex_and_gender_difference = case_when(preferred_gender != sex_assigned_at_birth ~ "1", TRUE~"0")) %>% 
+        team_cf = unclass(first(project_team___2)),
+        team_transplant = unclass(first(project_team___3)),
+        team_sicklecell = unclass(first(project_team___4)),
+        team_autoimmune = unclass(first(project_team___5)),
+        team_gi = unclass(first(project_team___6)),
+        team_other = unclass(first(project_team___7)),
+        predicted_project_team = first(predicted_project_team),
+        sex_and_gender_difference = case_when(preferred_gender !=
+                                                sex_assigned_at_birth ~ "1",
+                                              TRUE~"0")) %>% 
   pivot_longer(cols = starts_with("team_"),names_to = "project_team", values_to = "team_value", values_drop_na = TRUE) %>%
   dplyr::select(record_id,id,discord_user,discord_invite_status,bday,deceased,predicted_project_team,project_team,preferred_gender,sex_assigned_at_birth,vol_preferred_pronouns___1,vol_preferred_pronouns___2,vol_preferred_pronouns___3,team_value,status,date_of_death,ff) %>% 
   fill(discord_user,discord_invite_status,bday,deceased,predicted_project_team,project_team,preferred_gender,sex_assigned_at_birth,vol_preferred_pronouns___1,vol_preferred_pronouns___2,vol_preferred_pronouns___3,team_value,status,date_of_death,ff) %>% 
@@ -183,6 +193,15 @@ census_percent_visited = lmer(percent_visited_to_date ~ new_census + days_on_cen
 tab_model(descriptives_percent_visited, census_percent_visited, dv.labels = c("Model 1: Patient Descriptives","Model 2:New Census"), show.aic = TRUE, show.dev = TRUE)
 
 ```
+
+## Add days unitl first visit
+
+```{r days-til-first-visit}
+visit_time_since_start = date - start_date,
+        visit_weeks_since_start = as.numeric(visit_time_since_start/604800)
+```
+
+
 
 ```{r visited-as-outcome}
 #Descriptives predicting whether or not pt was visited
