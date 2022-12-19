@@ -108,12 +108,29 @@ unique_date_list <- date_list %>%
 
 per_patient_reach_pt_iterative_vpd2 <- left_join(per_patient_reach_pt_iterative_vpd1,unique_date_list,by ="date")
 
-per_patient_reach_pt_iterative_vpd <- left_join(per_patient_reach_pt_iterative_vpd2,SGLPatientsREDCap, by = "record_id") 
+per_patient_reach_pt_iterative_vpd3 <- left_join(per_patient_reach_pt_iterative_vpd2,SGLPatientsREDCap, by = "record_id") 
+```
+
+```{r adding-in-volunteers-per-day}
+clean_patients_redcap <- myData %>% 
+  select(date,record_id,v_name,v_name_2,v_name_3,v_name_4,v_name_5,v_name_6,v_name_7,v_name_8) %>% 
+  pivot_longer(cols = starts_with("v_name"),
+               names_to = "vol_visit_number",
+               names_prefix = "vol",
+               values_to = "v_full_name",
+               values_drop_na = TRUE)
+
+clean_volunteers_per_day <- clean_patients_redcap %>% 
+  group_by(date) %>% 
+  summarise(volunteers_on_shift =   length(unique(v_full_name)))
+
+per_patient_reach_pt_iterative_vpd <- left_join(per_patient_reach_pt_iterative_vpd3,clean_volunteers_per_day, by = "date") 
+
 ```
 
 
 ```{r visualizations-individual, eval=FALSE}
-vpd_over_time <- ggplot(per_patient_reach_pt_iterative_vpd, aes(date, percent_visited_to_date,color = ff))+
+vpd_over_time <- ggplot(per_patient_reach_pt_iterative_vpd, aes(date, percent_visited_to_date,color = volunteers_on_shift))+
   geom_point()
 vpd_over_time
 
@@ -140,6 +157,8 @@ overall_patient_reach_by_date%>%
 
 ```{r eda}
 cor.test(per_patient_reach_pt_iterative_vpd$days_on_census,per_patient_reach_pt_iterative_vpd$percent_visited_to_date)
+
+cor.test(per_patient_reach_pt_iterative_vpd$volunteers_on_shift,per_patient_reach_pt_iterative_vpd$percent_visited_to_date)
 ```
 
 
@@ -156,10 +175,10 @@ per_pt_model_df <- per_patient_reach_pt_iterative_vpd %>%
                               TRUE~0))
 
 # Descriptives: preferred_gender, project_team, ff
-descriptives_percent_visited = lmer(percent_visited_to_date ~ preferred_gender + project_team + ff_clean + (1|record_id), data = per_pt_model_df, REML=FALSE)
+descriptives_percent_visited = lmer(percent_visited_to_date ~ preferred_gender + project_team + ff_clean + volunteers_on_shift + new_census + days_on_census + years_since_launch + (1|record_id), data = per_pt_model_df, REML=FALSE)
 
 # Effect of new census and days on census 
-census_percent_visited = lmer(percent_visited_to_date ~ new_census + days_on_census + ff_clean + years_since_launch + (1|record_id), data = per_pt_model_df, REML=FALSE)
+census_percent_visited = lmer(percent_visited_to_date ~ new_census + days_on_census + ff_clean + years_since_launch + volunteers_on_shift+ (1|record_id), data = per_pt_model_df, REML=FALSE)
 
 tab_model(descriptives_percent_visited, census_percent_visited, dv.labels = c("Model 1: Patient Descriptives","Model 2:New Census"), show.aic = TRUE, show.dev = TRUE)
 
