@@ -64,7 +64,9 @@ first_visit_df <- per_patient_reach_pt_iterative_vpd1 %>%
   filter(visited == 1) %>% 
   mutate(first_visit = first(date),
          time_to_first_visit = as.numeric((real_start_date %--%
-                                             first_visit))/86400)
+                                             first_visit))/86400) %>% 
+  distinct(record_id, .keep_all = TRUE) %>% 
+  select(record_id,first_visit,time_to_first_visit)
 
 
 overall_patient_reach_by_date <- patient_reach_df %>% 
@@ -134,7 +136,8 @@ clean_volunteers_per_day <- clean_patients_redcap %>%
   group_by(date) %>% 
   summarise(volunteers_on_shift =   length(unique(v_full_name)))
 
-per_patient_reach_pt_iterative_vpd <- left_join(per_patient_reach_pt_iterative_vpd3,clean_volunteers_per_day, by = "date") 
+per_patient_reach_pt_iterative_vpd4 <- left_join(per_patient_reach_pt_iterative_vpd3,clean_volunteers_per_day, by = "date") 
+per_patient_reach_pt_iterative_vpd <- left_join(per_patient_reach_pt_iterative_vpd4,first_visit_df, by = "record_id")
 
 ```
 
@@ -196,14 +199,10 @@ tab_model(descriptives_percent_visited, census_percent_visited, dv.labels = c("M
 
 ## Add days unitl first visit
 
-```{r days-til-first-visit}
-visit_time_since_start = date - start_date,
-        visit_weeks_since_start = as.numeric(visit_time_since_start/604800)
-```
 
 
 
-```{r visited-as-outcome}
+```{r visited-as-outcome, eval=FALSE}
 #Descriptives predicting whether or not pt was visited
 # low_percent
 descriptives_visit_bin = glmer(visited ~ preferred_gender + project_team + ff_clean + (1|record_id), data = per_pt_model_df, family=binomial("logit"))
@@ -218,3 +217,26 @@ tab_model(descriptives_visit_bin, new_census_visit_bin, dv.labels = c("Model 1: 
 ```
 ## Dates of no-shift, but census was run
 "2022-12-13", 
+
+## Analyses using new census to predict time-to-first-visit for intro patients (does new census reduce the time in which new patients are visited?)
+```{r intros-time-to-first-visit-analysis}
+first_visit_intros_df  <- per_patient_reach_pt_iterative_vpd %>% 
+  filter(real_start_date >= "2022-05-14") %>% 
+  mutate(not_yet_visited = case_when(is.na(first_visit)~ 1, TRUE ~ 0),
+         ff_clean = case_when(ff =="Yes"~1,
+                              TRUE~0))
+
+per_patient_reach_pt_iterative_vpd <- per_patient_reach_pt_iterative_vpd %>% 
+  mutate(ff_clean = case_when(ff =="Yes"~1,
+                              TRUE~0))
+distinct(first_visit_intros_df, record_id)
+first_visit_intros_df_date_of_first <- first_visit_intros_df %>% 
+  filter(date==real_start_date) %>% 
+  distinct(record_id, date, .keep_all = TRUE)
+
+census_time_to_first_visit = lm(time_to_first_visit ~ new_census + volunteers_on_shift, data = first_visit_intros_df_date_of_first)
+
+tab_model(census_time_to_first_visit, dv.labels = c("Model 1: Time to visit outcome"), show.aic = TRUE, show.dev = TRUE)
+str(first_visit_intros_df)
+```
+
