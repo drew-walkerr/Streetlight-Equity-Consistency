@@ -15,6 +15,9 @@ library(lme4)
 library(nlme)
 library(sjPlot)
 library(sjmisc)
+library(survival)
+library(survminer)
+
 library(patchwork)
 library(sjlabelled)
 redcap_api_url <- 'https://redcap.ctsi.ufl.edu/redcap/api/' 
@@ -221,7 +224,7 @@ tab_model(descriptives_visit_bin, new_census_visit_bin, dv.labels = c("Model 1: 
 ## Analyses using new census to predict time-to-first-visit for intro patients (does new census reduce the time in which new patients are visited?)
 ```{r intros-time-to-first-visit-analysis}
 first_visit_intros_df  <- per_patient_reach_pt_iterative_vpd %>% 
-  filter(real_start_date >= "2022-05-14") %>% 
+  #filter(real_start_date >= "2022-05-14") %>% 
   mutate(not_yet_visited = case_when(is.na(first_visit)~ 1, TRUE ~ 0),
          ff_clean = case_when(ff =="Yes"~1,
                               TRUE~0))
@@ -229,7 +232,6 @@ first_visit_intros_df  <- per_patient_reach_pt_iterative_vpd %>%
 per_patient_reach_pt_iterative_vpd <- per_patient_reach_pt_iterative_vpd %>% 
   mutate(ff_clean = case_when(ff =="Yes"~1,
                               TRUE~0))
-distinct(first_visit_intros_df, record_id)
 first_visit_intros_df_date_of_first <- first_visit_intros_df %>% 
   filter(date==real_start_date) %>% 
   distinct(record_id, date, .keep_all = TRUE)
@@ -239,4 +241,58 @@ census_time_to_first_visit = lm(time_to_first_visit ~ new_census + volunteers_on
 tab_model(census_time_to_first_visit, dv.labels = c("Model 1: Time to visit outcome"), show.aic = TRUE, show.dev = TRUE)
 str(first_visit_intros_df)
 ```
+
+# Survival analysis
+
+* Before doing survival analyses, need to clean first_visit_intros_df 
+
+** Restructure "first visit variable-- instead of having just their first visit date, mark their first visit date on the on census dataframe, keeping all other oncensus days prior to their first visit date. 
+
+
+```{r first-visit-survival}
+first_visit_intros_df_survival <- first_visit_intros_df %>% 
+  filter(date == first_visit) %>% 
+  distinct(record_id,date,.keep_all = TRUE) %>% 
+  mutate(first_visit_binary = case_when(date==first_visit~1, TRUE~0))
+
+## Add in uncensored
+
+not_yet_visited <- first_visit_intros_df %>% 
+  filter(is.na(first_visit)) %>% 
+  filter(date == max(date)) %>% 
+  mutate(first_visit_binary = 0)
+
+intros_survival_df <- rbind(first_visit_intros_df_survival,not_yet_visited)
+
+
+library(survival)
+library(survminer)
+#time = days_on_census
+#event = first_visit_binary
+#group = new_census
+# data = intros_survival_df
+
+```
+```{r surv-analyses}
+fit <- survfit(Surv(days_on_census, first_visit_binary) ~ new_census,
+  data = intros_survival_df
+)
+res.cox <- coxph(Surv(days_on_census, first_visit_binary) ~ new_census, data = intros_survival_df)
+
+ggsurvplot(fit, data=intros_survival_df, pval = TRUE, pval.method = TRUE,conf.int = TRUE,
+  surv.median.line = "hv")
+
+fit
+```
+
+** Run thru survival analyses -- 
+
+time = n(days on census before first visit), n(oncensus_dates < first visit)
+
+event = first_visit (was this the first visit?)
+
+group = ppl whose first on census day was before the census date change vs ppl whose on census day day was after the census date 
+
+
+** Remove all dates after first visit for each patient
 
