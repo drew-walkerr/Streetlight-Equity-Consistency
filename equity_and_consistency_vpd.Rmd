@@ -248,7 +248,7 @@ str(first_visit_intros_df)
 
 ** Restructure "first visit variable-- instead of having just their first visit date, mark their first visit date on the on census dataframe, keeping all other oncensus days prior to their first visit date. 
 
-
+** consider amending the oncensus days -1 to reflect days since first appearing on census-- a 0 should = when pt was introd same day they were first on census. 
 ```{r first-visit-survival}
 first_visit_intros_df_survival <- first_visit_intros_df %>% 
   filter(date == first_visit) %>% 
@@ -282,7 +282,35 @@ res.cox <- coxph(Surv(days_on_census, first_visit_binary) ~ new_census, data = i
 ggsurvplot(fit, data=intros_survival_df, pval = TRUE, pval.method = TRUE,conf.int = TRUE,
   surv.median.line = "hv")
 
-fit
+ff_fit <- survfit(Surv(days_on_census, first_visit_binary) ~ ff_clean,
+  data = intros_survival_df
+)
+
+ggsurvplot(ff_fit, data=intros_survival_df, pval = TRUE, pval.method = TRUE,conf.int = TRUE,
+  surv.median.line = "hv")
+
+ff_fit
+
+
+
+disease_fit <- survfit(Surv(days_on_census, first_visit_binary) ~ project_team,
+  data = intros_survival_df
+)
+
+disease_diff <- survdiff(Surv(days_on_census, first_visit_binary) ~ project_team,
+  data = intros_survival_df
+)
+
+disease_diff
+
+summary(disease_diff)
+ggsurvplot(disease_fit, data=intros_survival_df, pval = TRUE, pval.method = TRUE,conf.int = TRUE,
+  surv.median.line = "hv")
+
+disease_fit
+summary(disease_fit)
+
+survdiff()
 ```
 
 ** Run thru survival analyses -- 
