@@ -54,6 +54,8 @@ patient_reach_df[is.na(patient_reach_df)] <- 0
 patient_reach_df <- patient_reach_df %>% 
   mutate(new_census = as.factor(ifelse(date >="2022-11-14", 1, 0)))
 
+#May need to subtract one for days on census-- 1 = the first day, which might be 0-- if we visited on first day they were on census, that's 0 days til intro?
+
 per_patient_reach_pt_iterative_vpd1 <- patient_reach_df %>% 
   group_by(record_id) %>% 
   arrange(date) %>% 
@@ -169,6 +171,16 @@ overall_patient_reach_by_date%>%
   ggplot(aes(date,percent_visited, color = new_census)) +
   geom_point() + 
   geom_smooth(method = "lm")
+
+new_census_overall_reach_by_date <- overall_patient_reach_by_date%>% 
+  select(date, percent_visited) %>% 
+  filter(date >= "2022-05-14")  %>% 
+  mutate(new_census = as.factor(ifelse(date >="2022-11-14", 1, 0)))
+
+new_census_linear <- glm(percent_visited~new_census, data = new_census_overall_reach_by_date)
+summary(new_census_linear)
+new_census_linear
+
 ```
 
 ```{r eda}
@@ -224,7 +236,7 @@ tab_model(descriptives_visit_bin, new_census_visit_bin, dv.labels = c("Model 1: 
 ## Analyses using new census to predict time-to-first-visit for intro patients (does new census reduce the time in which new patients are visited?)
 ```{r intros-time-to-first-visit-analysis}
 first_visit_intros_df  <- per_patient_reach_pt_iterative_vpd %>% 
-  #filter(real_start_date >= "2022-05-14") %>% 
+  filter(start_date >= "2022-05-14") %>% 
   mutate(not_yet_visited = case_when(is.na(first_visit)~ 1, TRUE ~ 0),
          ff_clean = case_when(ff =="Yes"~1,
                               TRUE~0))
@@ -249,6 +261,9 @@ str(first_visit_intros_df)
 ** Restructure "first visit variable-- instead of having just their first visit date, mark their first visit date on the on census dataframe, keeping all other oncensus days prior to their first visit date. 
 
 ** consider amending the oncensus days -1 to reflect days since first appearing on census-- a 0 should = when pt was introd same day they were first on census. 
+
+
+** clean first_visit_intros_df / not_yet_visited -- there seem to be ppl who started SL way before the study period 
 ```{r first-visit-survival}
 first_visit_intros_df_survival <- first_visit_intros_df %>% 
   filter(date == first_visit) %>% 
@@ -273,12 +288,14 @@ library(survminer)
 # data = intros_survival_df
 
 ```
+
 ```{r surv-analyses}
 fit <- survfit(Surv(days_on_census, first_visit_binary) ~ new_census,
   data = intros_survival_df
 )
 res.cox <- coxph(Surv(days_on_census, first_visit_binary) ~ new_census, data = intros_survival_df)
 
+summary(fit)
 ggsurvplot(fit, data=intros_survival_df, pval = TRUE, pval.method = TRUE,conf.int = TRUE,
   surv.median.line = "hv")
 
@@ -310,7 +327,6 @@ ggsurvplot(disease_fit, data=intros_survival_df, pval = TRUE, pval.method = TRUE
 disease_fit
 summary(disease_fit)
 
-survdiff()
 ```
 
 ** Run thru survival analyses -- 
