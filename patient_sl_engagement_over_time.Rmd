@@ -1,0 +1,571 @@
+---
+title: "NIH Specific Aims Analyses"
+author: "Drew Walker"
+date: "9/20/2021"
+output: html_document
+---
+
+# Questions for specific aims
+
+Exposure: 
+* We hypothesize in experimental group, by end of 12-week intervention, X% of patients will have had 4 or more encounters with the SL team, 
+
+Survey aims: 
+* X% Will have completed at least 80% of survey instruments to assess their emotional health and well-being. (Take from old survey of hospitalized patients?)
+* We hypothesize that both groups will have  % completion of survey instruments, X% will look favorably on study, 90% of surveys completed. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(remotes)
+library(tidyverse)
+library(stargazer)
+library(table1)
+library(lubridate)
+library(redcapAPI)
+library(here)
+library(postmastr)
+library(tm)
+library(psych)
+library(wordcloud)
+library(janitor)
+library(tibbletime)
+#Data load
+APIToken <- read_csv("apitoken.csv", col_names = FALSE)
+StreetlightDatabaseToken <- as.character(APIToken[1,1])
+
+
+```
+
+```{r dataload}
+get_redcap_data <- function(APIToken){
+  redcap_api_url <- 'https://redcap.ctsi.ufl.edu/redcap/api/' 
+#set options to allow us to access project files
+#below is the token and urls
+options(redcap_api_url)
+options(scipen = n)
+StreetlightDatabaseToken <- APIToken
+rcon <- redcapConnection(redcap_api_url, token = StreetlightDatabaseToken)
+#successful complete exportation of entire dataset 
+myData <- exportRecords(rcon, labels = FALSE)
+return(myData)
+}
+
+redcapdata <- get_redcap_data(StreetlightDatabaseToken)
+```
+
+# Making 12-week SL engagement prediction
+
+## Patients seen since COVID, FFs only-
+
+```{r}
+since_date_visit_df <- function(redcapdata,sincedate){
+visitsums <- redcapdata %>% 
+  select(record_id, p_full_name,bday, preferred_gender,age,deceased,start_date,last_visit_date,interest_in_sl,ff,issues,dd,date,v_name,v_name_2,v_name_3,v_name_4,v_name_5,v_name_6,v_name_7,location___1,location___2,location___3,location___4,start_date_time,interaction_time,narrative,project_team___1,project_team___2,project_team___3,project_team___4,project_team___5,project_team___6,project_team___7,predicted_project_team) %>% 
+  group_by(record_id) %>% 
+  fill(p_full_name,bday,preferred_gender,age,deceased,start_date,last_visit_date,ff,issues,project_team___1,project_team___2,project_team___3,project_team___4,project_team___5,project_team___6,project_team___7,predicted_project_team) %>% 
+  mutate(visit_time_since_start = date - start_date,
+        visit_weeks_since_start = as.numeric(visit_time_since_start/604800)) %>%
+  ungroup() %>% 
+  filter(date >= as.Date(sincedate))
+today <- as.Date(Sys.Date())
+#full_list is an SNA useful dataframe in which each row is a unique volunteer on a unique visit date. This is all of the visits recorded for all patients, with visits repeated for each volunteer present. 
+
+return(visitsums)
+}
+
+visits_df_since_covid <- since_date_visit_df(redcapdata,"2020-02-28") 
+
+visits_df_since_covid$start_date
+#Monthly intro rates for DPPS
+visits_df_since_new_per_month <- visits_df_since_covid %>% 
+  filter(ff == "Yes") %>% 
+  filter(start_date > as.Date("2020-02-28")) %>% 
+  mutate(year_start = year(start_date),
+         month_start = month(start_date),
+         is_18 = case_when(age < 18 ~ "No",
+                         TRUE~"Yes"),
+         age_cat = case_when(age > 13 & age < 16 ~ "13-15",
+                             age >15 & age <19 ~ "16-18",
+                             age >18 & age <22 ~ "19-21",
+                             age >21 & age <25 ~ "22-24",
+                             age >24 & age <28 ~ "25-27",
+                             age >27 & age <30 ~ "27-29",
+                             TRUE~ "30+")) %>% 
+  select(record_id,preferred_gender,year_start,month_start,age_cat,is_18) %>% 
+  distinct(record_id, .keep_all = TRUE) %>% 
+  group_by(year_start,month_start)
+
+# INTRO breakdown by age since COVID-19 
+
+
+table1(~is_18 + age_cat + preferred_gender, data = visits_df_since_new_per_month)
+
+
+summary(visits_df_since_covid$age)
+
+hist(visits_df_since_covid$age)
+
+# All DPP  visits since COVID 
+
+visits_df_since_covid_age <- visits_df_since_covid %>% 
+  mutate(is_18 = case_when(age < 18 ~ "No",
+                         TRUE~"Yes"),
+         age_cat = case_when(age > 13 & age < 16 ~ "13-15",
+                             age >15 & age <19 ~ "16-18",
+                             age >18 & age <22 ~ "19-21",
+                             age >21 & age <25 ~ "22-24",
+                             age >24 & age <28 ~ "25-27",
+                             age >27 & age <30 ~ "27-29",
+                             TRUE~ "30+")) %>% 
+  filter(ff == "Yes") %>%
+  select(record_id,age,is_18,age_cat) %>% 
+  distinct(record_id, .keep_all = TRUE)
+
+# Summarize by month year
+
+month_year_intro_sums <- visits_df_since_new_per_month %>% 
+  group_by(year_start,month_start) %>% 
+  count()
+
+describe(month_year_intro_sums$n)
+
+
+hist(visits_df_since_covid_age$age)
+table1(~age|is_18, data = visits_df_since_covid_age)
+table1(~age + age_cat + is_18, data = visits_df_since_covid_age)
+
+ggplot(visits_df_since_covid_age, aes(x = factor(age_cat)), fill(age_cat))+
+    geom_bar()+
+  labs(x = "Age Category", y = "Frequency",
+       title = "Age Category Breakdown for DPP SL patients seen since 2/28/2021")+
+  theme_classic()
+
+ggplot(visits_df_since_covid_age, aes(x = factor(is_18))) +
+    geom_bar()+
+  labs(x = "Over 18?", y = "Frequency",
+       title = "<18 year old patients vs adult patients for DPP SL patients seen since 2/28/2021")+
+  theme_classic()
+
+
+```
+
+# Visits after 12 weeks of SL
+```{r, week12}
+
+since_date_patient_list <- function(redcapdata,sincedate){
+visitsums <- redcapdata %>% 
+  select(record_id, p_full_name,bday,age,deceased,start_date,last_visit_date,interest_in_sl,ff,issues,dd,date,v_name,v_name_2,v_name_3,v_name_4,v_name_5,v_name_6,v_name_7,location___1,location___2,location___3,location___4,start_date_time,interaction_time,narrative,project_team___1,project_team___2,project_team___3,project_team___4,project_team___5,project_team___6,project_team___7,predicted_project_team) %>% 
+  group_by(record_id) %>% 
+  fill(p_full_name,bday,age,deceased,start_date,last_visit_date,ff,issues,project_team___1,project_team___2,project_team___3,project_team___4,project_team___5,project_team___6,project_team___7,predicted_project_team) %>% 
+  mutate(visit_time_since_start = date - start_date,
+        visit_weeks_since_start = as.numeric(visit_time_since_start/604800),
+        twelve_week_after_start = as.Date(start_date+weeks(12)),
+        six_months_after_start = as.Date(start_date+weeks(24))) %>% 
+  pivot_longer(cols = starts_with("v_name"),names_to = "volunteer_number", values_to = "volunteers", values_drop_na = TRUE) %>% 
+  ungroup() %>% 
+          filter(date >= as.Date(sincedate)) %>%
+          filter(date <= as.Date(twelve_week_after_start))
+today <- as.Date(Sys.Date())
+#full_list is an SNA useful dataframe in which each row is a unique volunteer on a unique visit date. This is all of the visits recorded for all patients, with visits repeated for each volunteer present. 
+full_list <- visitsums
+full_list_sum <- full_list %>% 
+  group_by(record_id,p_full_name) %>% 
+  fill(last_visit_date,start_date) %>% 
+  summarise(
+    visit_total = n_distinct(narrative, na.rm = TRUE), #Is this where it filters non-visited?
+    time_total = sum(interaction_time, na.rm = TRUE),
+    time_per_visit = time_total/visit_total,
+    time_in_sl = as.duration(start_date %--% today),
+    time_in_sl_days = time_in_sl %/% 86400,
+    time_in_sl_years = time_in_sl_days %/% 365,
+    issue = first(issues),
+    team_cancer = unclass(first(project_team___1)),
+    team_cf = unclass(first(project_team___2)),
+    team_transplant = unclass(first(project_team___3)),
+    team_sicklecell = unclass(first(project_team___4)),
+    team_autoimmune = unclass(first(project_team___5)),
+    team_gi = unclass(first(project_team___6)),
+    team_other = unclass(first(project_team___7)),
+    predicted_project_team = first(predicted_project_team),
+    visited_once = case_when(visit_total == 1 ~ "Visited Once",
+                             visit_total > 1 ~ "Visited Multiple Times"),
+    last_visit_date = last_visit_date,
+    start_date = start_date) %>% 
+  pivot_longer(cols = starts_with("team_"),names_to = "project_team", values_to = "team_value", values_drop_na = TRUE)
+#volunteer_sum_table_full is the full volunteers edgelist for each volunteer, with rows repeated for each volunteer visiting each day. (multiple rows for multiple volunteers on the same day). This is extremely useful for SNA. 
+#This also helps record summary values for SNA including:
+#volunteer_count (number of volunteers in patient network)
+#avg_repeat_visits_per_volunteer (way to measure avg level of familiarity with vols)
+#max_repeat_visits_per_vol (way to measure highest frequency of repeat visits of volunteers in patients network-- help characterize potentially "closest" alter)
+volunteer_sum_table_full <- full_list %>% 
+  group_by(record_id,volunteers) %>% 
+  mutate(repeated_visits = n()) %>% 
+  ungroup() %>% 
+  group_by(record_id) %>% 
+  mutate(volunteer_count = length(unique(volunteers)),
+         avg_repeat_visits_per_vol = mean(repeated_visits),
+         max_repeat_visits_per_vol = max(repeated_visits))
+#sum_merger helps summarize the SNA data, geting it ready to join with distinct patient values 
+volunteer_sum_merger_full <- volunteer_sum_table_full %>% 
+  distinct(record_id, .keep_all = TRUE)
+#one row per patients, with volunteer visit summary data
+merged_last_year_summary_table_full <- left_join(full_list_sum,volunteer_sum_merger_full, by = "record_id")
+
+#working with compressing pivoted project_team_lists
+project_teams_full <- full_list_sum %>% 
+  filter(team_value == "2")
+project_teams_mergeable_full <- project_teams_full %>% 
+  select(record_id, project_team,predicted_project_team) %>% 
+  distinct(record_id, .keep_all = TRUE)
+
+#merged project team
+merged_last_year_summary_table_proj_teams_full <- left_join(merged_last_year_summary_table_full, project_teams_mergeable_full, by = "record_id") %>% 
+  distinct(record_id, .keep_all = TRUE) 
+#distinct dataframe with project teams and volunteer SNA summaries 
+clean_full_visits_df <- merged_last_year_summary_table_proj_teams_full %>% 
+  select(-project_team.x, -p_full_name.y) %>% 
+  rename(project_team = project_team.y) %>% 
+  select(-p_full_name) %>% 
+  rename(p_full_name = p_full_name.x)
+
+#merge with OnCensusList.csv to get values for how often patients have been on Census since 
+#Before running this, should run the RMD OnCensus Analysis.RMD
+on_census_days_pt <- redcapdata %>%
+  fill(start_date) %>% 
+  select(record_id,date=census_date,start_date) %>% 
+  filter(!is.na((date))) %>% 
+  distinct(record_id,date) %>% 
+  mutate(on_census = 1) %>% 
+  group_by(record_id) %>% 
+  summarize(days_on_census = sum(on_census))
+
+clean_full_visits_with_census <- left_join(clean_full_visits_df,on_census_days_pt, by = "record_id")
+
+return(clean_full_visits_with_census)
+}
+
+visits_df_12_weeks_since_covid <- since_date_patient_list(redcapdata,"2020-02-28") 
+visits_df_12_weeks_since_covid$twelve_week_visits <- visits_df_12_weeks_since_covid$visit_total
+
+visits_df_12_weeks_since_covid$twelve_week_census <- visits_df_12_weeks_since_covid$days_on_census
+
+df_12_week <- visits_df_12_weeks_since_covid %>% 
+  select(record_id, twelve_week_visits, twelve_week_census)
+
+visits_df_12_weeks_dpp <- visits_df_12_weeks_since_covid %>% 
+  filter(ff == "Yes")
+describe(visits_df_12_weeks_dpp$visit_total)
+
+quantile(visits_df_12_weeks_dpp$visit_total, probs = c(.50))
+
+```
+
+# Visits after 24 weeks of SL
+```{r, week24}
+
+since_date_patient_list <- function(redcapdata,sincedate){
+visitsums <- redcapdata %>% 
+  select(record_id, p_full_name,bday,age,deceased,start_date,last_visit_date,interest_in_sl,ff,issues,dd,date,v_name,v_name_2,v_name_3,v_name_4,v_name_5,v_name_6,v_name_7,location___1,location___2,location___3,location___4,start_date_time,interaction_time,narrative,project_team___1,project_team___2,project_team___3,project_team___4,project_team___5,project_team___6,project_team___7,predicted_project_team) %>% 
+  group_by(record_id) %>% 
+  fill(p_full_name,bday,age,deceased,start_date,last_visit_date,ff,issues,project_team___1,project_team___2,project_team___3,project_team___4,project_team___5,project_team___6,project_team___7,predicted_project_team) %>% 
+  mutate(visit_time_since_start = date - start_date,
+        visit_weeks_since_start = as.numeric(visit_time_since_start/604800),
+        twelve_week_after_start = as.Date(start_date+weeks(12)),
+        six_months_after_start = as.Date(start_date+weeks(24))) %>% 
+  pivot_longer(cols = starts_with("v_name"),names_to = "volunteer_number", values_to = "volunteers", values_drop_na = TRUE) %>% 
+  ungroup() %>% 
+          filter(date >= as.Date(sincedate)) %>%
+          filter(date <= as.Date(six_months_after_start))
+today <- as.Date(Sys.Date())
+#full_list is an SNA useful dataframe in which each row is a unique volunteer on a unique visit date. This is all of the visits recorded for all patients, with visits repeated for each volunteer present. 
+full_list <- visitsums
+full_list_sum <- full_list %>% 
+  group_by(record_id,p_full_name) %>% 
+  fill(last_visit_date,start_date) %>% 
+  summarise(
+    visit_total = n_distinct(narrative, na.rm = TRUE), #Is this where it filters non-visited?
+    time_total = sum(interaction_time, na.rm = TRUE),
+    time_per_visit = time_total/visit_total,
+    time_in_sl = as.duration(start_date %--% today),
+    time_in_sl_days = time_in_sl %/% 86400,
+    time_in_sl_years = time_in_sl_days %/% 365,
+    issue = first(issues),
+    team_cancer = unclass(first(project_team___1)),
+    team_cf = unclass(first(project_team___2)),
+    team_transplant = unclass(first(project_team___3)),
+    team_sicklecell = unclass(first(project_team___4)),
+    team_autoimmune = unclass(first(project_team___5)),
+    team_gi = unclass(first(project_team___6)),
+    team_other = unclass(first(project_team___7)),
+    predicted_project_team = first(predicted_project_team),
+    visited_once = case_when(visit_total == 1 ~ "Visited Once",
+                             visit_total > 1 ~ "Visited Multiple Times"),
+    last_visit_date = last_visit_date,
+    start_date = start_date) %>% 
+  pivot_longer(cols = starts_with("team_"),names_to = "project_team", values_to = "team_value", values_drop_na = TRUE)
+#volunteer_sum_table_full is the full volunteers edgelist for each volunteer, with rows repeated for each volunteer visiting each day. (multiple rows for multiple volunteers on the same day). This is extremely useful for SNA. 
+#This also helps record summary values for SNA including:
+#volunteer_count (number of volunteers in patient network)
+#avg_repeat_visits_per_volunteer (way to measure avg level of familiarity with vols)
+#max_repeat_visits_per_vol (way to measure highest frequency of repeat visits of volunteers in patients network-- help characterize potentially "closest" alter)
+volunteer_sum_table_full <- full_list %>% 
+  group_by(record_id,volunteers) %>% 
+  mutate(repeated_visits = n()) %>% 
+  ungroup() %>% 
+  group_by(record_id) %>% 
+  mutate(volunteer_count = length(unique(volunteers)),
+         avg_repeat_visits_per_vol = mean(repeated_visits),
+         max_repeat_visits_per_vol = max(repeated_visits))
+#sum_merger helps summarize the SNA data, geting it ready to join with distinct patient values 
+volunteer_sum_merger_full <- volunteer_sum_table_full %>% 
+  distinct(record_id, .keep_all = TRUE)
+#one row per patients, with volunteer visit summary data
+merged_last_year_summary_table_full <- left_join(full_list_sum,volunteer_sum_merger_full, by = "record_id")
+
+#working with compressing pivoted project_team_lists
+project_teams_full <- full_list_sum %>% 
+  filter(team_value == "2")
+project_teams_mergeable_full <- project_teams_full %>% 
+  select(record_id, project_team,predicted_project_team) %>% 
+  distinct(record_id, .keep_all = TRUE)
+
+#merged project team
+merged_last_year_summary_table_proj_teams_full <- left_join(merged_last_year_summary_table_full, project_teams_mergeable_full, by = "record_id") %>% 
+  distinct(record_id, .keep_all = TRUE) 
+#distinct dataframe with project teams and volunteer SNA summaries 
+clean_full_visits_df <- merged_last_year_summary_table_proj_teams_full %>% 
+  select(-project_team.x, -p_full_name.y) %>% 
+  rename(project_team = project_team.y) %>% 
+  select(-p_full_name) %>% 
+  rename(p_full_name = p_full_name.x)
+
+#merge with OnCensusList.csv to get values for how often patients have been on Census since 
+#Before running this, should run the RMD OnCensus Analysis.RMD
+
+on_census_days_pt <- redcapdata %>%
+  fill(start_date) %>% 
+  select(record_id,date=census_date,start_date) %>% 
+  filter(!is.na((date))) %>% 
+  distinct(record_id,date) %>% 
+  mutate(on_census = 1) %>% 
+  group_by(record_id) %>% 
+  summarize(days_on_census = sum(on_census))
+
+clean_full_visits_with_census <- left_join(clean_full_visits_df,on_census_days_pt, by = "record_id")
+return(clean_full_visits_with_census)
+}
+
+visits_df_24_weeks_since_covid <- since_date_patient_list(redcapdata,"2020-02-28") 
+
+visits_df_24_weeks_since_covid$six_month_visits <-  visits_df_24_weeks_since_covid$visit_total
+
+visits_df_24_weeks_since_covid$six_month_census <- visits_df_24_weeks_since_covid$days_on_census
+
+df_6_month <- visits_df_24_weeks_since_covid %>% 
+  select(record_id, six_month_visits, six_month_census)
+
+
+visits_df_24_weeks_dpp <- visits_df_24_weeks_since_covid %>% 
+  filter(ff == "Yes")
+describe(visits_df_24_weeks_dpp$visit_total)
+
+quantile(visits_df_24_weeks_dpp$visit_total, probs = c(.50))
+
+```
+# All time visits
+
+
+```{r, all-time}
+
+all_time_pt_list <- function(redcapdata,sincedate){
+visitsums <- redcapdata %>% 
+  select(record_id, p_full_name,bday,age,deceased,start_date,last_visit_date,interest_in_sl,ff,issues,dd,date,v_name,v_name_2,v_name_3,v_name_4,v_name_5,v_name_6,v_name_7,location___1,location___2,location___3,location___4,start_date_time,interaction_time,narrative,project_team___1,project_team___2,project_team___3,project_team___4,project_team___5,project_team___6,project_team___7,predicted_project_team) %>% 
+  group_by(record_id) %>% 
+  fill(p_full_name,bday,age,deceased,start_date,last_visit_date,ff,issues,project_team___1,project_team___2,project_team___3,project_team___4,project_team___5,project_team___6,project_team___7,predicted_project_team) %>% 
+  mutate(visit_time_since_start = date - start_date,
+        visit_weeks_since_start = as.numeric(visit_time_since_start/604800),
+        twelve_week_after_start = as.Date(start_date+weeks(12)),
+        six_months_after_start = as.Date(start_date+weeks(24))) %>% 
+  pivot_longer(cols = starts_with("v_name"),names_to = "volunteer_number", values_to = "volunteers", values_drop_na = TRUE) %>% 
+  ungroup() %>% 
+          filter(date >= as.Date(sincedate))
+today <- as.Date(Sys.Date())
+#full_list is an SNA useful dataframe in which each row is a unique volunteer on a unique visit date. This is all of the visits recorded for all patients, with visits repeated for each volunteer present. 
+full_list <- visitsums
+full_list_sum <- full_list %>% 
+  group_by(record_id,p_full_name) %>% 
+  fill(last_visit_date,start_date) %>% 
+  summarise(
+    visit_total = n_distinct(narrative, na.rm = TRUE), #Is this where it filters non-visited?
+    time_total = sum(interaction_time, na.rm = TRUE),
+    time_per_visit = time_total/visit_total,
+    time_in_sl = as.duration(start_date %--% today),
+    time_in_sl_days = time_in_sl %/% 86400,
+    time_in_sl_years = time_in_sl_days %/% 365,
+    issue = first(issues),
+    team_cancer = unclass(first(project_team___1)),
+    team_cf = unclass(first(project_team___2)),
+    team_transplant = unclass(first(project_team___3)),
+    team_sicklecell = unclass(first(project_team___4)),
+    team_autoimmune = unclass(first(project_team___5)),
+    team_gi = unclass(first(project_team___6)),
+    team_other = unclass(first(project_team___7)),
+    predicted_project_team = first(predicted_project_team),
+    visited_once = case_when(visit_total == 1 ~ "Visited Once",
+                             visit_total > 1 ~ "Visited Multiple Times"),
+    last_visit_date = last_visit_date,
+    start_date = start_date) %>% 
+  pivot_longer(cols = starts_with("team_"),names_to = "project_team", values_to = "team_value", values_drop_na = TRUE)
+#volunteer_sum_table_full is the full volunteers edgelist for each volunteer, with rows repeated for each volunteer visiting each day. (multiple rows for multiple volunteers on the same day). This is extremely useful for SNA. 
+#This also helps record summary values for SNA including:
+#volunteer_count (number of volunteers in patient network)
+#avg_repeat_visits_per_volunteer (way to measure avg level of familiarity with vols)
+#max_repeat_visits_per_vol (way to measure highest frequency of repeat visits of volunteers in patients network-- help characterize potentially "closest" alter)
+volunteer_sum_table_full <- full_list %>% 
+  group_by(record_id,volunteers) %>% 
+  mutate(repeated_visits = n()) %>% 
+  ungroup() %>% 
+  group_by(record_id) %>% 
+  mutate(volunteer_count = length(unique(volunteers)),
+         avg_repeat_visits_per_vol = mean(repeated_visits),
+         max_repeat_visits_per_vol = max(repeated_visits))
+#sum_merger helps summarize the SNA data, geting it ready to join with distinct patient values 
+volunteer_sum_merger_full <- volunteer_sum_table_full %>% 
+  distinct(record_id, .keep_all = TRUE)
+#one row per patients, with volunteer visit summary data
+merged_last_year_summary_table_full <- left_join(full_list_sum,volunteer_sum_merger_full, by = "record_id")
+
+#working with compressing pivoted project_team_lists
+project_teams_full <- full_list_sum %>% 
+  filter(team_value == "2")
+project_teams_mergeable_full <- project_teams_full %>% 
+  select(record_id, project_team,predicted_project_team) %>% 
+  distinct(record_id, .keep_all = TRUE)
+
+#merged project team
+merged_last_year_summary_table_proj_teams_full <- left_join(merged_last_year_summary_table_full, project_teams_mergeable_full, by = "record_id") %>% 
+  distinct(record_id, .keep_all = TRUE) 
+#distinct dataframe with project teams and volunteer SNA summaries 
+clean_full_visits_df <- merged_last_year_summary_table_proj_teams_full %>% 
+  select(-project_team.x, -p_full_name.y) %>% 
+  rename(project_team = project_team.y) %>% 
+  select(-p_full_name) %>% 
+  rename(p_full_name = p_full_name.x)
+
+#merge with OnCensusList.csv to get values for how often patients have been on Census since 
+#Before running this, should run the RMD OnCensus Analysis.RMD
+
+on_census_days_pt <- redcapdata %>%
+  fill(start_date) %>% 
+  select(record_id,date=census_date,start_date) %>% 
+  filter(!is.na((date))) %>% 
+  distinct(record_id,date) %>% 
+  mutate(on_census = 1) %>% 
+  group_by(record_id) %>% 
+  summarize(days_on_census = sum(on_census))
+
+clean_full_visits_with_census <- left_join(clean_full_visits_df,on_census_days_pt, by = "record_id")
+return(clean_full_visits_with_census)
+}
+
+all_time_pt_list_df <- all_time_pt_list(redcapdata,"2020-02-28") 
+all_time_twelve_week <- left_join(all_time_pt_list_df,df_12_week, by = "record_id")
+all_time_six_month <- left_join(all_time_twelve_week,df_6_month, by= "record_id")
+all_time_ffs <- all_time_six_month %>% 
+  filter(ff == "Yes")
+colnames(all_time_ffs)
+engagement_data_table <- table1(~visit_total + time_total + days_on_census + time_per_visit + twelve_week_visits + six_month_visits + time_in_sl_years + volunteer_count + avg_repeat_visits_per_vol + max_repeat_visits_per_vol + age + predicted_project_team.y | ff, data = all_time_six_month)
+
+library(flextable)
+t1flex(engagement_data_table) %>% 
+  save_as_docx(path="SL_engagement_data.docx")
+
+
+
+
+describe(all_time_pt_list_df$visit_total)
+describe(all_time_ffs$visit_total)
+quantile(all_time_pt_list_df$visit_total, probs = c(.50))
+
+```
+
+```{r, ff-vs-non}
+
+
+ff_non_pts <- visits_df_since_covid %>% 
+  select(record_id,ff,start_date) %>% 
+  distinct(record_id,.keep_all=TRUE)
+
+table1(~ff, data = ff_non_pts)
+```
+# Simple dataframe for conducting monthly intro analysis since 2015
+
+
+
+```{r, ff-startdates}
+ffs_intros <- redcapdata %>% 
+  filter(ff=="Yes") %>% 
+  mutate(year_start = year(start_date),
+         month_start = month(start_date),
+         age_at_intro = (as.duration(bday %--% start_date)) %/% dyears(1)) %>% 
+  group_by(record_id) %>% 
+  mutate(team_cancer = unclass(first(project_team___1)),
+    team_cf = unclass(first(project_team___2)),
+    team_transplant = unclass(first(project_team___3)),
+    team_sicklecell = unclass(first(project_team___4)),
+    team_autoimmune = unclass(first(project_team___5)),
+    team_gi = unclass(first(project_team___6)),
+    team_other = unclass(first(project_team___7))) %>% 
+pivot_longer(cols = starts_with("team_"),names_to = "project_team", values_to = "team_value", values_drop_na = TRUE)
+  
+project_teams_full <- ffs_intros %>% 
+  filter(team_value == "2")
+project_teams_mergeable_full <- project_teams_full %>% 
+  select(record_id, project_team,predicted_project_team) %>% 
+  distinct(record_id, .keep_all = TRUE)
+
+#merged project team
+ffs_intros_with_project_team <- left_join(ffs_intros, project_teams_mergeable_full, by = "record_id") %>% 
+  distinct(record_id, .keep_all = TRUE) %>% 
+  select(record_id, project_team = project_team.y, age_at_intro,year_start,month_start)
+png("histogram_age_at_intro.png")
+hist(ffs_intros_with_project_team$age_at_intro,main="Histogram of Streetlight Patient Age at Recruitment",xlab = "Age", ylab = "Frequency",breaks=c(10))
+dev.off()
+table1(~age_at_intro|project_team, data=ffs_intros_with_project_team)
+
+  
+Counts_since_2015  <-ffs_intros_with_project_team %>% 
+  group_by(year_start,month_start) %>% 
+  count() %>% 
+  filter(year_start > 2014) 
+
+sum_ffs_intros <- Counts_since_2015 %>% 
+  group_by(year_start,month_start) %>% 
+  mutate(year_month = paste0(year_start,".",month_start)) %>% 
+  group_by(month_start) %>% 
+  summarise(mean_month_count = mean(n))
+
+
+ggplot(sum_ffs_intros, aes(x = factor(month_start),y=mean_month_count,fill=month_start)) +
+    geom_col(show.legend = FALSE,
+           width = 1) +
+  labs(x = NULL, y = NULL,
+       title = "Average New Streetlight Palliative Patients per Month Since 2015")+
+    theme_classic()
+ggsave("intros_by_month.png")
+
+ffs <- redcapdata %>% 
+  filter(ff=="Yes") %>% 
+  distinct(record_id)
+length(ffs$record_id)
+
+# Identifying number of spanish speaking DPPs
+language <- redcapdata %>% 
+  filter(vol_preferred_language!="NA") %>% 
+  select(record_id, vol_preferred_language)
+
+table1(~vol_preferred_language, data = language)
+
+
+```
+

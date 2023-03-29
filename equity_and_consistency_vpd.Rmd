@@ -39,16 +39,18 @@ myData <- exportRecords(rcon, labels=FALSE)
 
 - unlike the census one, we should calculate this iteratively (every date has the VPD only up to that date )
 ```{r vpd-cum-avg}
+
+# on_census_days_pt = pts record_ids with all days on census 
 on_census_days_pt <- myData %>%
   fill(start_date) %>% 
   select(record_id,date=census_date,start_date) %>% 
   filter(!is.na((date))) 
-
+## pts record_ids with all days visited 
 visited_days_pt <- myData %>% 
   select(record_id,date) %>% 
   mutate(visited = 1) %>% 
   filter(!is.na(date))
-
+# On_Census dates and 
 patient_reach_df <- left_join(on_census_days_pt,visited_days_pt, by = c("record_id","date"))
 patient_reach_df[is.na(patient_reach_df)] <- 0
 patient_reach_df <- patient_reach_df %>% 
@@ -76,7 +78,8 @@ first_visit_df <- per_patient_reach_pt_iterative_vpd1 %>%
 
 overall_patient_reach_by_date <- patient_reach_df %>% 
   group_by(date) %>% 
-  summarize(percent_visited = mean(visited))
+  summarize(percent_visited = mean(visited),
+            census_count = n_distinct(record_id))
 
 
 ```
@@ -339,4 +342,104 @@ group = ppl whose first on census day was before the census date change vs ppl w
 
 
 ** Remove all dates after first visit for each patient
+
+## Census Size/Percent visited graph 
+
+```{r census-size-percent-visited }
+overall_patient_reach_by_date
+
+# daily census size 
+
+daily_census_size <- ggplot(overall_patient_reach_by_date, aes(date, census_count))+
+  geom_point()+
+  ggtitle("Daily Census Size")+
+  geom_smooth(method = "loess")+
+  theme_classic()
+daily_census_size
+ggsave("SL_daily_census_size.png")
+# Add a title
+# Make it classic 
+# Add in ggsave()
+
+## daily visit % --convert to scatter plot with added LOESS curve 
+daily_visit_pct <- ggplot(overall_patient_reach_by_date, aes(date, percent_visited))+
+  geom_point()+
+   ggtitle("Daily % Patients Visited")+
+  geom_smooth(method = "loess")+
+  theme_classic()
+daily_visit_pct
+ggsave("SL_daily_%_visited.png")
+# Add a title
+# Make it classic 
+# add in ggsave()
+
+
+# vols on shift
+
+vols_on_shift_df <- per_patient_reach_pt_iterative_vpd %>% 
+  ungroup() %>% 
+  distinct(date,volunteers_on_shift)
+
+daily_vols_on_shift <- ggplot(vols_on_shift_df, aes(date, volunteers_on_shift))+
+  geom_point()+
+   ggtitle("Daily # of Volunteers on Shift")+
+  geom_smooth(method = "loess")+
+  theme_classic()
+daily_vols_on_shift
+ggsave("vols_on_shift.png")
+
+```
+
+
+```{r pt-descriptives}
+# per_patient_reach_pt_iterative_vpd
+# For all patients who ahve been on a census since 2020-11-05
+patient_list <- per_patient_reach_pt_iterative_vpd %>% 
+  ungroup() %>% 
+  distinct(record_id, .keep_all = TRUE)
+library(table1)
+
+per_patient_visited_year <- visited_days_pt %>% 
+  mutate(day = as.Date(date),
+         month = month(day),
+         year = year(day)) %>% 
+  group_by(year) %>% 
+  distinct(record_id, .keep_all = TRUE)
+
+per_year_unique_patients <- per_patient_visited_year %>% 
+  summarize(patients_per_year = n_distinct(record_id))
+
+
+yearly_patients <- ggplot(per_year_unique_patients, aes(year, patients_per_year))+
+   ggtitle("Number of Patients Visited by SL per Year")+
+  theme_classic()
+
+
+yearly_patients_plot <- ggplot(per_year_unique_patients, aes(x= year,y = patients_per_year, fill = year,label=patients_per_year)) + 
+          geom_col(show.legend = FALSE, position = position_dodge(width = 1))+
+  labs(x = "Year", y = "Number of unique SL patients visited")+
+  geom_text(size=3,nudge_y = 10)+
+  theme_pubclean()
+
+
+
+ggsave("yearly_patients.png")
+
+
+
+
+
+#table1(~discord_invite_status + deceased + project_team + preferred_gender + as.factor(ff_clean)|year, data = per_patient_reach_year)
+# Disease breakdown
+# Age breakdown
+# Gender breakdown
+# Deceased? 
+
+tbl1_descriptives <- table1(~discord_invite_status + deceased + project_team + preferred_gender + as.factor(ff_clean), data = patient_list)
+
+library(flextable)
+t1flex(tbl1_descriptives) %>% 
+  save_as_docx(path="sl_patient_descriptives_11.05.2020 to 03.15.2023.docx")
+
+```
 
