@@ -468,7 +468,8 @@ clean_full_visits_with_census <- left_join(clean_full_visits_df,on_census_days_p
 return(clean_full_visits_with_census)
 }
 
-all_time_pt_list_df <- all_time_pt_list(redcapdata,"2020-02-28") 
+since_date <- "2022-03-29"
+all_time_pt_list_df <- all_time_pt_list(redcapdata,since_date) 
 all_time_twelve_week <- left_join(all_time_pt_list_df,df_12_week, by = "record_id")
 all_time_six_month <- left_join(all_time_twelve_week,df_6_month, by= "record_id")
 all_time_ffs <- all_time_six_month %>% 
@@ -476,9 +477,10 @@ all_time_ffs <- all_time_six_month %>%
 colnames(all_time_ffs)
 engagement_data_table <- table1(~visit_total + time_total + days_on_census + time_per_visit + twelve_week_visits + six_month_visits + time_in_sl_years + volunteer_count + avg_repeat_visits_per_vol + max_repeat_visits_per_vol + age + predicted_project_team.y | ff, data = all_time_six_month)
 
+today <- Sys.Date()
 library(flextable)
 t1flex(engagement_data_table) %>% 
-  save_as_docx(path="SL_engagement_data.docx")
+  save_as_docx(path=paste0(since_date,"to", today, "SL_engagement_data.docx"))
 
 
 
