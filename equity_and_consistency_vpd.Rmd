@@ -14,10 +14,11 @@ library(redcapAPI)
 library(lme4)
 library(nlme)
 library(sjPlot)
+library(gt)
 library(sjmisc)
 library(survival)
 library(survminer)
-
+library(paletteer)
 library(patchwork)
 library(sjlabelled)
 redcap_api_url <- 'https://redcap.ctsi.ufl.edu/redcap/api/' 
@@ -158,31 +159,49 @@ vpd_over_time
 ```
 
 ```{r visualizations-overalll}
+# This graph shows post-covid reach growth 
+
 daily_visit_pct <- ggplot(overall_patient_reach_by_date, aes(date, percent_visited))+
-  geom_line()+
+  geom_point()+
   geom_vline(xintercept = as.POSIXct(as.Date("2022-11-14")),
-             color = "dark green", size = 2, linetype = "dashed")
+             color = "dark green", size = 2, linetype = "dashed")+
+  geom_text(aes(x=as.POSIXct(as.Date("2023-01-14")), label="\nNew Census Feature", y=.1), colour="dark green") +
+  geom_smooth()+
+  theme_classic2()
 daily_visit_pct
 
 ```
 
 ```{r overall-rdd-graph}
+# This plot shows overall daily percent visitation for the length of the study (2022-05-14 to 2022-11-14)
 overall_patient_reach_by_date%>% 
   select(date, percent_visited) %>% 
   filter(date >= "2022-05-14") %>% 
   mutate(new_census = as.factor(ifelse(date >="2022-11-14", 1, 0))) %>% 
   ggplot(aes(date,percent_visited, color = new_census)) +
   geom_point() + 
-  geom_smooth(method = "lm")
+  geom_smooth(method = "lm") +
+  theme_classic2()
 
-new_census_overall_reach_by_date <- overall_patient_reach_by_date%>% 
-  select(date, percent_visited) %>% 
+overall_patient_reach_by_date_merge <- left_join(overall_patient_reach_by_date,clean_volunteers_per_day, by = "date")
+
+# Regression based on A/B Test
+
+new_census_overall_reach_by_date <- overall_patient_reach_by_date_merge%>% 
   filter(date >= "2022-05-14")  %>% 
   mutate(new_census = as.factor(ifelse(date >="2022-11-14", 1, 0)))
 
-new_census_linear <- glm(percent_visited~new_census, data = new_census_overall_reach_by_date)
+new_census_linear <- lm(percent_visited~new_census, data = new_census_overall_reach_by_date)
+
+new_census_linear_covariates <- lm(percent_visited~new_census + census_count + volunteers_on_shift, data = new_census_overall_reach_by_date)
+
 summary(new_census_linear)
+summary(new_census_linear_covariates)
 new_census_linear
+# add model using volunteers_per_day as covariate
+tab_model(new_census_linear, new_census_linear_covariates, dv.labels = c("Crude Linear New Census Model","Linear New Census Model Adjusted for Census Count, Vols per Day"), show.aic = TRUE, show.dev = TRUE, file = "linear_census_overall_reach_models.html")
+
+
 
 ```
 
@@ -209,9 +228,9 @@ per_pt_model_df <- per_patient_reach_pt_iterative_vpd %>%
 descriptives_percent_visited = lmer(percent_visited_to_date ~ preferred_gender + project_team + ff_clean + volunteers_on_shift + new_census + days_on_census + years_since_launch + (1|record_id), data = per_pt_model_df, REML=FALSE)
 
 # Effect of new census and days on census 
-census_percent_visited = lmer(percent_visited_to_date ~ new_census + days_on_census + ff_clean + years_since_launch + volunteers_on_shift+ (1|record_id), data = per_pt_model_df, REML=FALSE)
+census_percent_visited = lmer(percent_visited_to_date ~ new_census + days_on_census + ff_clean + volunteers_on_shift+ (1|record_id), data = per_pt_model_df, REML=FALSE)
 
-tab_model(descriptives_percent_visited, census_percent_visited, dv.labels = c("Model 1: Patient Descriptives","Model 2:New Census"), show.aic = TRUE, show.dev = TRUE)
+tab_model(descriptives_percent_visited, census_percent_visited, dv.labels = c("Model 1: Patient Descriptives","Model 2:New Census"), show.aic = TRUE, show.dev = TRUE, file = "per_patient_multilevel_models_percent_visited_per_pt.html")
 
 ```
 
@@ -228,7 +247,7 @@ descriptives_visit_bin = glmer(visited ~ preferred_gender + project_team + ff_cl
 
 # Effect of just new census and days on census
 # low_percent
-new_census_visit_bin = glmer(visited ~ new_census + days_on_census + ff_clean + years_since_launch + (1|record_id), data = per_pt_model_df, family=binomial("logit"))
+new_census_visit_bin = glmer(visited ~ new_census + ff_clean + volunteers_on_shift + (1|record_id), data = per_pt_model_df, family=binomial("logit"))
 
 tab_model(descriptives_visit_bin, new_census_visit_bin, dv.labels = c("Model 1: Patient Descriptives on chance of getting visited","Model 2:New Census on Chance of getting Visited"), show.aic = TRUE, show.dev = TRUE)
 
@@ -293,14 +312,45 @@ library(survminer)
 ```
 
 ```{r surv-analyses}
+
+# Unadjusted survival plot 
 fit <- survfit(Surv(days_on_census, first_visit_binary) ~ new_census,
   data = intros_survival_df
 )
 res.cox <- coxph(Surv(days_on_census, first_visit_binary) ~ new_census, data = intros_survival_df)
 
+summary(res.cox)
 summary(fit)
+
 ggsurvplot(fit, data=intros_survival_df, pval = TRUE, pval.method = TRUE,conf.int = TRUE,
-  surv.median.line = "hv")
+  surv.median.line = "hv")+
+  ggtitle("Unadjusted New Census Feature Survival Plot")
+ggsave("unadj_census_intro_surv_plot.png")
+
+#survdiff
+census_diff <- survdiff(Surv(days_on_census, first_visit_binary) ~ new_census,
+  data = intros_survival_df
+)
+census_diff
+
+
+# Adjusted survival plot with new census, accounting for number of volunteers per day
+
+# Adjusted survival plot 
+fit_adjusted <- survfit(Surv(days_on_census, first_visit_binary) ~ new_census + volunteers_on_shift ,
+  data = intros_survival_df
+)
+res.cox_adjusted <- coxph(Surv(days_on_census, first_visit_binary) ~ new_census + volunteers_on_shift, data = intros_survival_df)
+
+summary(fit_adjusted)
+summary(res.cox_adjusted)
+
+ggsurvplot(fit_adjusted, data=intros_survival_df, pval = TRUE, pval.method = TRUE,conf.int = TRUE,
+  surv.median.line = "hv")+
+  ggtitle("Adjusted New Census Feature Survival Plot")
+ggsave("adjusted_census_intro_surv_plot.png")
+
+
 
 ff_fit <- survfit(Surv(days_on_census, first_visit_binary) ~ ff_clean,
   data = intros_survival_df
@@ -443,3 +493,35 @@ t1flex(tbl1_descriptives) %>%
 
 ```
 
+
+
+```{r fake-census}
+Censusgt_data <- read_csv("fake_census.csv")
+Census_gt_data_group <- Censusgt_data %>% 
+  group_by(Unit)
+Censusgt <- gt(Census_gt_data_group)
+Censusgt <- Censusgt %>% 
+  tab_header(
+    title = "Streetlight Patient Census",
+    subtitle = "Patients by Unit"
+    ) %>% 
+  opt_row_striping() %>% 
+  tab_options(row_group.background.color = "#35b0ab") %>% 
+  opt_table_lines() %>% 
+   data_color(
+    columns = vars(VisitsPerDay),
+    colors = scales::col_numeric(
+      palette = c("red","white","green"),
+      domain = c(0,.5, 1)),
+    alpha = .75)
+
+Censusgt
+
+```
+
+```{r fake-census-save}
+Censusgt %>% 
+  gtsave("FakePatientCensus.html", inline_css = TRUE)
+```
+
+```
