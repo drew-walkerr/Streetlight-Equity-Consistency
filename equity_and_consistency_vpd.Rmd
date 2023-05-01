@@ -438,6 +438,11 @@ daily_vols_on_shift <- ggplot(vols_on_shift_df, aes(date, volunteers_on_shift))+
 daily_vols_on_shift
 ggsave("vols_on_shift.png")
 
+combo_plot <- daily_visit_pct/daily_census_size/daily_vols_on_shift
+
+combo_plot
+ggsave("combo_plot.png")
+
 ```
 
 
