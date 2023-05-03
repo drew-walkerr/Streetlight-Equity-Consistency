@@ -177,35 +177,61 @@ daily_visit_pct
 overall_patient_reach_by_date%>% 
   select(date, percent_visited) %>% 
   filter(date >= "2022-05-14") %>% 
+  filter(date <= "2023-04-26") %>% 
   mutate(new_census = as.factor(ifelse(date >="2022-11-14", 1, 0))) %>% 
   ggplot(aes(date,percent_visited, color = new_census)) +
   geom_point() + 
   geom_smooth(method = "lm") +
   theme_classic2()
 
+ggsave("daiily_census_rdd.png")
 overall_patient_reach_by_date_merge <- left_join(overall_patient_reach_by_date,clean_volunteers_per_day, by = "date")
 
 # Regression based on A/B Test
 
 new_census_overall_reach_by_date <- overall_patient_reach_by_date_merge%>% 
-  filter(date >= "2022-05-14")  %>% 
-  mutate(new_census = as.factor(ifelse(date >="2022-11-14", 1, 0)))
-
+  filter(date >= "2022-04-26")  %>% 
+  filter(date <= "2023-04-26") %>% 
+  mutate(new_census = as.factor(ifelse(date >="2022-11-14", 1, 0)),
+         year = as.factor(year(date)),
+         day = factor(wday(date, label = TRUE), ordered = FALSE),
+        month = as.factor(month(date))) 
+library(table1)
+table1(~new_census + day + month + year, data = new_census_overall_reach_by_date)
+str(new_census_overall_reach_by_date)
 new_census_linear <- lm(percent_visited~new_census, data = new_census_overall_reach_by_date)
 
-new_census_linear_covariates <- lm(percent_visited~new_census + census_count + volunteers_on_shift, data = new_census_overall_reach_by_date)
+new_census_linear_covariates <- lm(percent_visited~new_census + census_count + volunteers_on_shift + day, data = new_census_overall_reach_by_date)
 
 summary(new_census_linear)
 summary(new_census_linear_covariates)
 new_census_linear
-# add model using volunteers_per_day as covariate
+# add model using volunteers_per_day as covariates
 tab_model(new_census_linear, new_census_linear_covariates, dv.labels = c("Crude Linear New Census Model","Linear New Census Model Adjusted for Census Count, Vols per Day"), show.aic = TRUE, show.dev = TRUE, file = "linear_census_overall_reach_models.html")
+
+# Month was originally included, though removed due to had high colinearity w/ new census feature, which existed for months 11, 12, 1, 2, 3, 4, but not for 5,6,7,8,9,10
+
 
 
 
 ```
 
 ```{r eda}
+
+reach_hist <-ggplot(new_census_overall_reach_by_date, aes(x=percent_visited)) + 
+  geom_histogram(color="black", bins = 10)+
+  theme_classic()
+reach_hist
+ggsave("daily_percent_visited_histogram.png")
+
+vol_hist <-ggplot(new_census_overall_reach_by_date, aes(x=volunteers_on_shift)) + 
+  geom_histogram(color="black", bins = 10)+
+    theme(axis.text.x = element_text(size=15))+
+  theme_classic()
+vol_hist
+ggsave("daily_number_of_volunteers_histogram.png")
+
+
 cor.test(per_patient_reach_pt_iterative_vpd$days_on_census,per_patient_reach_pt_iterative_vpd$percent_visited_to_date)
 
 cor.test(per_patient_reach_pt_iterative_vpd$volunteers_on_shift,per_patient_reach_pt_iterative_vpd$percent_visited_to_date)
@@ -317,7 +343,7 @@ library(survminer)
 fit <- survfit(Surv(days_on_census, first_visit_binary) ~ new_census,
   data = intros_survival_df
 )
-res.cox <- coxph(Surv(days_on_census, first_visit_binary) ~ new_census, data = intros_survival_df)
+res.cox <- coxph(Surv(days_on_census, first_visit_binary) ~ new_census + volunteers_on_shift, data = intros_survival_df)
 
 summary(res.cox)
 summary(fit)
@@ -398,13 +424,18 @@ group = ppl whose first on census day was before the census date change vs ppl w
 ```{r census-size-percent-visited }
 overall_patient_reach_by_date
 
+my_theme <- theme(
+  axis.title.x = element_text(size = 16),
+  axis.text.x = element_text(size = 14),
+  axis.title.y = element_text(size = 16))
 # daily census size 
 
 daily_census_size <- ggplot(overall_patient_reach_by_date, aes(date, census_count))+
   geom_point()+
   ggtitle("Daily Census Size")+
   geom_smooth(method = "loess")+
-  theme_classic()
+  theme_classic()+
+  my_theme
 daily_census_size
 ggsave("SL_daily_census_size.png")
 # Add a title
@@ -416,7 +447,8 @@ daily_visit_pct <- ggplot(overall_patient_reach_by_date, aes(date, percent_visit
   geom_point()+
    ggtitle("Daily % Patients Visited")+
   geom_smooth(method = "loess")+
-  theme_classic()
+  theme_classic()+
+  my_theme
 daily_visit_pct
 ggsave("SL_daily_%_visited.png")
 # Add a title
@@ -434,14 +466,15 @@ daily_vols_on_shift <- ggplot(vols_on_shift_df, aes(date, volunteers_on_shift))+
   geom_point()+
    ggtitle("Daily # of Volunteers on Shift")+
   geom_smooth(method = "loess")+
-  theme_classic()
+  theme_classic()+
+  my_theme
 daily_vols_on_shift
 ggsave("vols_on_shift.png")
 
 combo_plot <- daily_visit_pct/daily_census_size/daily_vols_on_shift
 
 combo_plot
-ggsave("combo_plot.png")
+ggsave("combo_plot.png", width = 10, height = 16)
 
 ```
 
@@ -529,4 +562,45 @@ Censusgt %>%
   gtsave("FakePatientCensus.html", inline_css = TRUE)
 ```
 
+
+# Rerun sample on placebo model-- compare results
+
+```{r placebo-model}
+placebo_overall_reach_by_date <- overall_patient_reach_by_date_merge%>% 
+  filter(date >= "2021-04-26")  %>% 
+  filter(date <= "2022-04-26") %>% 
+  mutate(new_census = as.factor(ifelse(date >="2021-11-14", 1, 0)),
+         year = as.factor(year(date)),
+         day = factor(wday(date, label = TRUE), ordered = FALSE),
+        month = as.factor(month(date))) 
+library(table1)
+table1(~new_census + day + month + year, data = placebo_overall_reach_by_date)
+str(placebo_overall_reach_by_date)
+placebo_overall_reach_by_date_linear <- lm(percent_visited~new_census, data = placebo_overall_reach_by_date)
+
+placebo_overall_reach_by_date_linear_covariates <- lm(percent_visited~new_census + census_count + volunteers_on_shift + day, data = placebo_overall_reach_by_date)
+
+summary(placebo_overall_reach_by_date_linear)
+summary(placebo_overall_reach_by_date_linear_covariates)
+
+# add model using volunteers_per_day as covariates
+tab_model(placebo_overall_reach_by_date_linear, placebo_overall_reach_by_date_linear_covariates, dv.labels = c("Crude Linear Placebo Model","Linear Placebo Model Adjusted for Census Count, Vols per Day"), show.aic = TRUE, show.dev = TRUE, file = "linear_placebo_overall_reach_models.html")
+
+# Month was originally included, though removed due to had high colinearity w/ new census feature, which existed for months 11, 12, 1, 2, 3, 4, but not for 5,6,7,8,9,10
+
+
+
+
 ```
+
+```{r visit-same-day}
+same_day_visit_df <- intros_survival_df %>% 
+  filter(first_visit_binary == "1") %>% 
+  mutate(first_day_intro = case_when(days_on_census<2 ~1,
+                                     TRUE ~0))
+
+first_day_intro_glm <- glm(first_day_intro~new_census + volunteers_on_shift + new_census*low_percent, data =same_day_visit_df, family = "binomial")
+summary(first_day_intro_glm)
+
+```
+
